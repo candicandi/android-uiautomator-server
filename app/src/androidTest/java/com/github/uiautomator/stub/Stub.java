@@ -23,12 +23,15 @@
 
 package com.github.uiautomator.stub;
 
+import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.os.RemoteException;
-import androidx.test.InstrumentationRegistry;
+import android.view.accessibility.AccessibilityNodeInfo;
+
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.SdkSuppress;
+import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.AndroidJUnit4;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
@@ -58,7 +61,6 @@ import java.util.List;
 @RunWith(AndroidJUnit4.class)
 @SdkSuppress(minSdkVersion = 19)
 public class Stub {
-    private final String TAG = "UIAUTOMATOR";
     private static final int LAUNCH_TIMEOUT = 5000;
     // http://www.jsonrpc.org/specification#error_object
     private static final int CUSTOM_ERROR_CODE = -32001;
@@ -68,7 +70,9 @@ public class Stub {
 
     @Before
     public void setUp() throws Exception {
-        launchService();
+        UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        device.wakeUp();
+
         JsonRpcServer jrs = new JsonRpcServer(new ObjectMapper(), new AutomatorServiceImpl(), AutomatorService.class);
         jrs.setShouldLogInvocationErrors(true);
         jrs.setErrorResolver(new ErrorResolver() {
@@ -91,7 +95,7 @@ public class Stub {
     private void launchPackage(String packageName) {
         Log.i("Launch " + packageName);
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-        Context context = InstrumentationRegistry.getContext();
+        Context context = InstrumentationRegistry.getInstrumentation().getContext();
         final Intent intent = context.getPackageManager()
                 .getLaunchIntentForPackage(packageName);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -101,9 +105,8 @@ public class Stub {
         device.pressHome();
     }
 
-    private void launchService() throws RemoteException {
+    private void launchTestApp() throws RemoteException {
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-        Context context = InstrumentationRegistry.getContext();
         device.wakeUp();
 
         // Wait for launcher
@@ -115,7 +118,6 @@ public class Stub {
         }
 
         Log.d("Launch service");
-        startMonitorService(context);
     }
 
     private void startMonitorService(Context context) {
@@ -127,22 +129,34 @@ public class Stub {
     @After
     public void tearDown() {
         server.stop();
-        Context context = InstrumentationRegistry.getContext();
-        stopMonitorService(context);
+        //Context context = InstrumentationRegistry.getContext();
+        //stopMonitorService(context);
     }
 
-    private void stopMonitorService(Context context) {
-        Intent intent = new Intent("com.github.uiautomator.ACTION_STOP");
-        intent.setPackage("com.github.uiautomator");
-        context.startService(intent);
+    private boolean checkAccessibilityQuery() throws InterruptedException {
+        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        // check if app_process still alive
+        for (int i = 3; i > 0; i--) {
+            AccessibilityNodeInfo nodeInfo = instrumentation.getUiAutomation().getRootInActiveWindow();
+            if (nodeInfo != null) {
+                return true;
+            }
+            if (i > 1) Thread.sleep(1000);
+        }
+        return false;
     }
 
     @Test
     @LargeTest
     public void testUIAutomatorStub() throws InterruptedException {
+        // stop the server with "am force-stop com.github.uiautomator"
         Log.i("server started");
         while (server.isAlive()) {
-            Thread.sleep(100);
+            if (!checkAccessibilityQuery()) {
+                Log.e("uiAutomation.getRootInActiveWindow() always return null, okhttpd server quit");
+                return;
+            }
+            Thread.sleep(500);
         }
     }
 }
